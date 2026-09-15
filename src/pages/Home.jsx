@@ -19,47 +19,53 @@ function Home() {
   const [publicRooms, setPublicRooms] = useState([]);
 
   const createRoom = async () => {
-    if (!name.trim()) {
-      alert("Please enter your name");
-      return;
-    }
+  console.log("1. CREATE BUTTON CLICKED");
 
-    const playerId = crypto.randomUUID();
+  if (!name.trim()) {
+    console.log("2. NAME IS EMPTY");
+    alert("Please enter your name");
+    return;
+  }
 
-    try {
-      const response = await axios.post(`${API_URL}/api/rooms`, {
-        hostId: playerId,
-        hostName: name,
-        maxPlayers: maxPlayers,
-        rounds: rounds,
-        drawTime: drawTime,
-        wordCount: wordCount,
-        hints: hints,
-        privateRoom: privateRoom,
-      });
+  console.log("3. NAME:", name);
+  console.log("4. API_URL:", API_URL);
 
-      console.log("Room created:", response.data);
+  const playerId = crypto.randomUUID();
+  console.log("5. PLAYER ID:", playerId);
 
-      // Save HOST information
-      sessionStorage.setItem("playerId", playerId);
-      sessionStorage.setItem("playerName", name);
-      sessionStorage.setItem("roomId", response.data.roomId);
-      sessionStorage.setItem("isHost", "true");
+  try {
+    console.log("6. SENDING REQUEST...");
 
-      // Check what was actually saved
-      console.log("Host ID:", sessionStorage.getItem("playerId"));
-      console.log("Host Name:", sessionStorage.getItem("playerName"));
-      console.log("Is Host:", sessionStorage.getItem("isHost"));
+    const response = await axios.post(`${API_URL}/api/rooms`, {
+      hostId: playerId,
+      hostName: name,
+      maxPlayers: maxPlayers,
+      rounds: rounds,
+      drawTime: drawTime,
+      wordCount: wordCount,
+      hints: hints,
+      privateRoom: privateRoom,
+    });
 
-      alert("Room created! Room ID: " + response.data.roomId);
+    console.log("7. RESPONSE:", response.data);
 
-      // Go to lobby
-      navigate("/lobby");
-    } catch (error) {
-      console.error("Create room error:", error);
-      alert("Failed to create room");
-    }
-  };
+    sessionStorage.setItem("playerId", playerId);
+    sessionStorage.setItem("playerName", name);
+    sessionStorage.setItem("roomId", response.data.roomId);
+    sessionStorage.setItem("isHost", "true");
+
+    alert("Room created! Room ID: " + response.data.roomId);
+
+    navigate("/lobby");
+
+  } catch (error) {
+    console.error("8. CREATE ROOM ERROR:", error);
+    console.error("Response:", error.response?.data);
+    console.error("Status:", error.response?.status);
+
+    alert("Failed to create room");
+  }
+};
 
   const loadPublicRooms = async () => {
     try {

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { Client } from "@stomp/stompjs";
 import { useNavigate } from "react-router-dom";
+const API_URL = import.meta.env.VITE_API_URL;
+const WS_URL = import.meta.env.VITE_WS_URL;
 
 function Game() {
     const canvasRef = useRef(null);
@@ -42,7 +44,7 @@ function Game() {
     const loadGame = async () => {
         try {
             const response = await axios.get(
-                `http://localhost:8080/api/rooms/${roomId}`
+                `${API_URL}/api/rooms/${roomId}`
             );
 
             console.log("GAME FROM API:", response.data.game);
@@ -127,7 +129,7 @@ function Game() {
         loadGame();
 
         const stompClient = new Client({
-            brokerURL: "ws://localhost:8080/ws",
+            brokerURL: WS_URL,
             reconnectDelay: 5000,
             onConnect: () => {
                 console.log("Game WebSocket connected");
@@ -538,8 +540,10 @@ function Game() {
         });
 
         console.log("Leave room request sent");
-        localStorage.removeItem("roomId");
-        localStorage.removeItem("isHost");
+        sessionStorage.removeItem("roomId");
+        sessionStorage.removeItem("isHost");
+        sessionStorage.removeItem("playerId");
+        sessionStorage.removeItem("playerName");
         window.location.href = "/";
     };
 
@@ -601,8 +605,8 @@ function Game() {
                     <button
                         style={styles.primaryButton}
                         onClick={() => {
-                            localStorage.removeItem("roomId");
-                            localStorage.removeItem("isHost");
+                            sessionStorage.removeItem("roomId");
+                            sessionStorage.removeItem("isHost");
                             navigate("/");
                         }}
                     >

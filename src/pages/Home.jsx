@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+const API_URL = import.meta.env.VITE_API_URL;
 
 function Home() {
   const navigate = useNavigate();
@@ -26,7 +27,7 @@ function Home() {
     const playerId = crypto.randomUUID();
 
     try {
-      const response = await axios.post("http://localhost:8080/api/rooms", {
+      const response = await axios.post(`${API_URL}/api/rooms`, {
         hostId: playerId,
         hostName: name,
         maxPlayers: maxPlayers,
@@ -62,7 +63,7 @@ function Home() {
 
   const loadPublicRooms = async () => {
     try {
-      const response = await axios.get("http://localhost:8080/api/rooms/public");
+      const response = await axios.get(`${API_URL}/api/rooms/public`);
       setPublicRooms(response.data);
     } catch (error) {
       console.error("PUBLIC ROOMS ERROR:", error);
@@ -86,7 +87,7 @@ function Home() {
 
     try {
       const response = await axios.post(
-        `http://localhost:8080/api/rooms/${targetRoomId}/join`,
+        `${API_URL}/api/rooms/${targetRoomId}/join`,
         {
           playerId: playerId,
           playerName: name,

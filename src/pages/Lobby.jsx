@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { Client } from "@stomp/stompjs";
+const API_URL = import.meta.env.VITE_API_URL;
 
 function Lobby() {
   const navigate = useNavigate();
@@ -28,7 +29,7 @@ function Lobby() {
         loadRoom();
 
         const stompClient = new Client({
-            brokerURL: "ws://localhost:8080/ws",
+            brokerURL: import.meta.env.VITE_WS_URL,
             reconnectDelay: 5000,
 
             onConnect: () => {
@@ -72,7 +73,7 @@ function Lobby() {
     const loadRoom = async () => {
         try {
             const response = await axios.get(
-                `http://localhost:8080/api/rooms/${roomId}`
+                `${API_URL}/api/rooms/${roomId}`
             );
             console.log("ROOM FROM API:", response.data);
             setRoom(response.data);
@@ -159,8 +160,10 @@ function Lobby() {
         console.log("Leave room request sent");
 
         // Clear room information
-        localStorage.removeItem("roomId");
-        localStorage.removeItem("isHost");
+        sessionStorage.removeItem("roomId");
+        sessionStorage.removeItem("isHost");
+        sessionStorage.removeItem("playerId");
+        sessionStorage.removeItem("playerName");
 
         // Go back to home
         navigate("/");

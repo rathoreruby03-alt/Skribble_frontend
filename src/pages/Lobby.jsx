@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { Client } from "@stomp/stompjs";
+import { useNavigate } from "react-router-dom";
+
 const API_URL = import.meta.env.VITE_API_URL;
+const WS_URL = import.meta.env.VITE_WS_URL;
 
 function Lobby() {
     const navigate = useNavigate();
@@ -10,17 +12,40 @@ function Lobby() {
     const [room, setRoom] = useState(null);
     const [client, setClient] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     const roomId = sessionStorage.getItem("roomId");
     const playerId = sessionStorage.getItem("playerId");
+    const playerName = sessionStorage.getItem("playerName");
 
-    const isHost = room?.hostId === playerId;
+    // =========================================================
+    // LOAD ROOM
+    // =========================================================
+    const loadRoom = async () => {
+        try {
+            const response = await axios.get(
+                `${API_URL}/api/rooms/${roomId}`
+            );
 
-    const isReady =
-        room?.players?.find(
-            (player) => player.id === playerId
-        )?.ready || false;
+            console.log("ROOM FROM API:", response.data);
 
+            setRoom(response.data);
+
+            // If game already started, go directly to game
+            if (response.data.game?.gameStatus === "PLAYING") {
+                navigate("/game");
+            }
+
+        } catch (error) {
+            console.error("LOAD ROOM ERROR:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // =========================================================
+    // WEBSOCKET CONNECTION
+    // =========================================================
     useEffect(() => {
         if (!roomId) {
             navigate("/");
@@ -30,97 +55,102 @@ function Lobby() {
         loadRoom();
 
         const stompClient = new Client({
-            brokerURL: import.meta.env.VITE_WS_URL,
+            brokerURL: WS_URL,
+
             reconnectDelay: 5000,
+
+            debug: (str) => {
+                console.log("STOMP:", str);
+            },
 
             onConnect: () => {
                 console.log("WebSocket connected to lobby");
+
                 setIsConnected(true);
 
-                stompClient.subscribe(`/topic/room/${roomId}`, (message) => {
-                    const updatedRoom = JSON.parse(message.body);
-                    console.log("Room updated:", updatedRoom);
-                    setRoom(updatedRoom);
-                });
+                // -------------------------------------------------
+                // ROOM UPDATES
+                // -------------------------------------------------
+                stompClient.subscribe(
+                    `/topic/room/${roomId}`,
+                    (message) => {
+                        const updatedRoom = JSON.parse(message.body);
 
-                stompClient.subscribe(`/topic/room/${roomId}/game`, (message) => {
-                    const gameData = JSON.parse(message.body);
-                    console.log("Game update:", gameData);
+                        console.log("Room updated:", updatedRoom);
 
-                    if (gameData.gameStatus === "PLAYING") {
-                        navigate("/game");
+                        setRoom(updatedRoom);
+
+                        // If game starts, move to game page
+                        if (
+                            updatedRoom.game &&
+                            updatedRoom.game.gameStatus === "PLAYING"
+                        ) {
+                            console.log("Game started! Navigating to game...");
+                            navigate("/game");
+                        }
                     }
-                });
+                );
+
+                // -------------------------------------------------
+                // GAME UPDATES
+                // -------------------------------------------------
+                stompClient.subscribe(
+                    `/topic/room/${roomId}/game`,
+                    (message) => {
+                        const gameData = JSON.parse(message.body);
+
+                        console.log("Game update:", gameData);
+
+                        if (gameData.gameStatus === "PLAYING") {
+                            navigate("/game");
+                        }
+                    }
+                );
             },
 
             onStompError: (frame) => {
                 console.error("STOMP error:", frame);
+
                 setIsConnected(false);
             },
 
             onWebSocketError: (error) => {
                 console.error("WebSocket error:", error);
+
                 setIsConnected(false);
             },
 
             onWebSocketClose: () => {
                 console.log("WebSocket disconnected");
+
                 setIsConnected(false);
-            },
+            }
         });
 
         stompClient.activate();
+
         setClient(stompClient);
 
         return () => {
+            console.log("Closing lobby WebSocket");
+
+            setIsConnected(false);
+
             stompClient.deactivate();
         };
     }, [roomId, navigate]);
 
-    const loadRoom = async () => {
-        try {
-            const response = await axios.get(
-                `${API_URL}/api/rooms/${roomId}`
-            );
-            console.log("ROOM FROM API:", response.data);
-            setRoom(response.data);
-        } catch (error) {
-            console.error("ROOM LOAD ERROR:", error);
-        }
-    };
-
-    const startGame = () => {
-        if (!client || !isConnected) {
-            alert("WebSocket is not connected. Please wait a moment.");
-            return;
-        }
-
-        if (room.players.length < 2) {
-            alert("At least 2 players are required.");
-            return;
-        }
-
-        const allReady = room.players.every((player) => player.ready);
-
-        if (!allReady) {
-            alert("All players must be ready before starting.");
-            return;
-        }
-
-        client.publish({
-            destination: "/app/game/start",
-            body: JSON.stringify({
-                roomId: roomId,
-                hostId: playerId,
-            }),
-        });
-
-        console.log("Start game request sent");
-    };
-
+    // =========================================================
+    // TOGGLE READY
+    // =========================================================
     const toggleReady = () => {
+        console.log("READY BUTTON CLICKED");
+
+        console.log("WebSocket client:", client);
+        console.log("WebSocket connected:", isConnected);
+
         if (!client || !isConnected) {
-            alert("WebSocket is not connected. Please wait a moment.");
+            alert("WebSocket is not connected. Please wait.");
             return;
         }
 
@@ -129,443 +159,667 @@ function Lobby() {
         );
 
         if (!currentPlayer) {
-            alert("Player not found in this room. Please rejoin the room.");
+            console.error("Current player not found");
+
             return;
         }
 
-        const newReadyState = !currentPlayer.ready;
+        const newReadyStatus = !currentPlayer.ready;
+
+        console.log("Ready request:", {
+            roomId: roomId,
+            playerId: playerId,
+            ready: newReadyStatus
+        });
 
         client.publish({
             destination: "/app/game/ready",
             body: JSON.stringify({
                 roomId: roomId,
                 playerId: playerId,
-                ready: newReadyState,
-            }),
+                ready: newReadyStatus
+            })
         });
 
-        console.log("Ready request:", {
-            playerId,
-            ready: newReadyState,
-        });
+        console.log("Ready request sent");
     };
 
-    const leaveRoom = () => {
+    // =========================================================
+    // START GAME
+    // =========================================================
+    const startGame = () => {
+        console.log("================================");
+        console.log("START GAME BUTTON CLICKED");
+        console.log("================================");
+
+        console.log("START GAME ROOM:", room);
+
+        console.log(
+            "PLAYERS READY:",
+            room?.players?.map((player) => ({
+                name: player.name,
+                id: player.id,
+                ready: player.ready
+            }))
+        );
+
+        console.log("WebSocket client:", client);
+        console.log("WebSocket connected:", isConnected);
+        console.log("Current player ID:", playerId);
+        console.log("Host ID:", room?.hostId);
+
+        // -------------------------------------------------
+        // CHECK WEBSOCKET
+        // -------------------------------------------------
         if (!client || !isConnected) {
-            alert("WebSocket is not connected. Please wait a moment.");
+            alert("WebSocket is not connected. Please wait.");
             return;
         }
 
+        // -------------------------------------------------
+        // CHECK HOST
+        // -------------------------------------------------
+        if (room?.hostId !== playerId) {
+            alert("Only the host can start the game.");
+            return;
+        }
+
+        // -------------------------------------------------
+        // CHECK PLAYER COUNT
+        // -------------------------------------------------
+        if (!room?.players || room.players.length < 2) {
+            alert("At least 2 players are required.");
+            return;
+        }
+
+        // -------------------------------------------------
+        // CHECK READY STATUS
+        // -------------------------------------------------
+        const allReady = room.players.every(
+            (player) => player.ready === true
+        );
+
+        console.log("All players ready:", allReady);
+
+        if (!allReady) {
+            alert("All players must be ready.");
+            return;
+        }
+
+        // -------------------------------------------------
+        // SEND START GAME REQUEST
+        // -------------------------------------------------
         client.publish({
-            destination: "/app/game/leave",
+            destination: "/app/game/start",
             body: JSON.stringify({
                 roomId: roomId,
-                playerId: playerId,
-            }),
+                hostId: playerId
+            })
         });
 
-        console.log("Leave room request sent");
+        console.log("Start game request sent");
+    };
 
-        // Clear room information
+    // =========================================================
+    // LEAVE ROOM
+    // =========================================================
+    const leaveRoom = () => {
+        if (client && isConnected) {
+            client.publish({
+                destination: "/app/game/leave",
+                body: JSON.stringify({
+                    roomId: roomId,
+                    playerId: playerId
+                })
+            });
+
+            console.log("Leave room request sent");
+        }
+
         sessionStorage.removeItem("roomId");
         sessionStorage.removeItem("isHost");
         sessionStorage.removeItem("playerId");
         sessionStorage.removeItem("playerName");
 
-        // Go back to home
         navigate("/");
     };
 
-    if (!room) {
+    // =========================================================
+    // LOADING
+    // =========================================================
+    if (loading || !room) {
         return (
             <div style={styles.loadingContainer}>
-                <div style={styles.loadingCard}>
-                    <div style={styles.spinner}></div>
-                    <h2 style={{ color: "#1e293b", margin: "16px 0 8px 0" }}>
-                        Loading lobby...
-                    </h2>
-                    <p style={{ color: "#64748b", margin: 0 }}>
-                        Connecting to room <strong>{roomId}</strong>
-                    </p>
-                </div>
+                <div style={styles.spinner}></div>
+
+                <h2 style={{ color: "#4F46E5" }}>
+                    Loading lobby...
+                </h2>
+
+                <p style={{ color: "#6B7280" }}>
+                    Connecting to game server...
+                </p>
             </div>
         );
     }
 
-    const isStartDisabled =
-        room.players.length < 2 || !room.players.every((player) => player.ready);
+    // =========================================================
+    // CURRENT PLAYER
+    // =========================================================
+    const currentPlayer = room.players?.find(
+        (player) => player.id === playerId
+    );
 
+    const isHost = room.hostId === playerId;
+
+    const allReady =
+        room.players?.length >= 2 &&
+        room.players.every((player) => player.ready === true);
+
+    // =========================================================
+    // MAIN UI
+    // =========================================================
     return (
-        <div style={styles.pageContainer}>
-            <div style={styles.card}>
-                {/* Header Section */}
-                <header style={styles.header}>
-                    <h1 style={styles.title}>🎨 Skribbl Lobby</h1>
-                    <div style={styles.roomBadge}>
-                        <span style={styles.roomBadgeLabel}>ROOM CODE</span>
-                        <span style={styles.roomBadgeValue}>{room?.roomId}</span>
-                    </div>
-                </header>
+        <div style={styles.page}>
+            <div style={styles.container}>
 
-                {/* Room Info Bar */}
-                <div style={styles.infoBar}>
-                    <div style={styles.infoItem}>
-                        <span style={styles.infoIcon}>👥</span>
-                        <span>
-                            <strong>{room?.players?.length || 0}</strong> / {room?.maxPlayers || 0} Players
-                        </span>
+                {/* HEADER */}
+                <div style={styles.header}>
+                    <div>
+                        <h1 style={styles.title}>
+                            🎨 Skribbl Lobby
+                        </h1>
+
+                        <p style={styles.subtitle}>
+                            Room Code:{" "}
+                            <strong>{room.roomCode}</strong>
+                        </p>
                     </div>
-                    <div style={styles.infoItem}>
-                        <span style={styles.infoIcon}>🔄</span>
-                        <span>{room?.rounds} Rounds</span>
-                    </div>
-                    <div style={styles.infoItem}>
-                        <span style={styles.infoIcon}>⏱️</span>
-                        <span>{room?.drawTime}s Draw Time</span>
+
+                    <div
+                        style={{
+                            ...styles.connectionStatus,
+                            backgroundColor: isConnected
+                                ? "#DCFCE7"
+                                : "#FEE2E2",
+                            color: isConnected
+                                ? "#166534"
+                                : "#991B1B"
+                        }}
+                    >
+                        {isConnected
+                            ? "🟢 Connected"
+                            : "🔴 Connecting..."}
                     </div>
                 </div>
 
-                {/* Players List Section */}
-                <div style={styles.sectionCard}>
-                    <div style={styles.sectionHeader}>
-                        <h2 style={styles.sectionTitle}>Players in Lobby</h2>
-                        <span style={styles.playerCountPill}>
-                            {room.players.length} Joined
-                        </span>
+                {/* ROOM INFORMATION */}
+                <div style={styles.card}>
+
+                    <h2 style={styles.cardTitle}>
+                        🎮 Game Settings
+                    </h2>
+
+                    <div style={styles.settingsGrid}>
+
+                        <div style={styles.settingItem}>
+                            <span>Players</span>
+                            <strong>
+                                {room.players?.length || 0} /{" "}
+                                {room.maxPlayers}
+                            </strong>
+                        </div>
+
+                        <div style={styles.settingItem}>
+                            <span>Rounds</span>
+                            <strong>
+                                {room.rounds}
+                            </strong>
+                        </div>
+
+                        <div style={styles.settingItem}>
+                            <span>Draw Time</span>
+                            <strong>
+                                {room.drawTime}s
+                            </strong>
+                        </div>
+
+                        <div style={styles.settingItem}>
+                            <span>Word Choices</span>
+                            <strong>
+                                {room.wordCount}
+                            </strong>
+                        </div>
+
+                        <div style={styles.settingItem}>
+                            <span>Hints</span>
+                            <strong>
+                                {room.hints}
+                            </strong>
+                        </div>
+
                     </div>
+                </div>
 
-                    <div style={styles.playersList}>
-                        {room.players.map((player) => (
-                            <div
-                                key={player.id}
-                                style={{
-                                    ...styles.playerCard,
-                                    ...(player.id === playerId ? styles.currentPlayerCard : {}),
-                                }}
-                            >
-                                <div style={styles.playerInfo}>
-                                    <span style={styles.avatarIcon}>👤</span>
-                                    <span style={styles.playerName}>{player.name}</span>
-                                    {player.id === room.hostId && (
-                                        <span style={styles.hostTag}>👑 Host</span>
-                                    )}
-                                    {player.id === playerId && (
-                                        <span style={styles.youTag}>You</span>
-                                    )}
-                                </div>
+                {/* PLAYERS */}
+                <div style={styles.card}>
 
-                                <div style={styles.playerStatusContainer}>
-                                    <span
+                    <h2 style={styles.cardTitle}>
+                        👥 Players
+                    </h2>
+
+                    <div style={styles.playerList}>
+
+                        {room.players?.map((player) => {
+
+                            const playerIsHost =
+                                player.id === room.hostId;
+
+                            const playerIsCurrent =
+                                player.id === playerId;
+
+                            return (
+                                <div
+                                    key={player.id}
+                                    style={styles.playerRow}
+                                >
+
+                                    <div
                                         style={{
-                                            ...styles.statusBadge,
-                                            backgroundColor: player.ready ? "#dcfce7" : "#f1f5f9",
-                                            color: player.ready ? "#15803d" : "#64748b",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "10px"
                                         }}
                                     >
-                                        {player.ready ? "🟢 Ready" : "⚪ Not Ready"}
-                                    </span>
-                                    <span style={styles.scoreBadge}>⭐ {player.score}</span>
+
+                                        <div style={styles.avatar}>
+                                            {player.name
+                                                ?.charAt(0)
+                                                ?.toUpperCase()}
+                                        </div>
+
+                                        <div>
+
+                                            <div
+                                                style={{
+                                                    fontWeight: "700"
+                                                }}
+                                            >
+                                                {player.name}
+
+                                                {playerIsCurrent && (
+                                                    <span
+                                                        style={{
+                                                            marginLeft: "8px",
+                                                            color: "#4F46E5",
+                                                            fontSize: "0.8rem"
+                                                        }}
+                                                    >
+                                                        You
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {playerIsHost && (
+                                                <span
+                                                    style={
+                                                        styles.hostTag
+                                                    }
+                                                >
+                                                    👑 Host
+                                                </span>
+                                            )}
+
+                                        </div>
+
+                                    </div>
+
+                                    <div>
+
+                                        {player.ready ? (
+                                            <span
+                                                style={
+                                                    styles.readyBadge
+                                                }
+                                            >
+                                                ✓ Ready
+                                            </span>
+                                        ) : (
+                                            <span
+                                                style={
+                                                    styles.waitingBadge
+                                                }
+                                            >
+                                                Waiting
+                                            </span>
+                                        )}
+
+                                    </div>
+
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
+
                     </div>
                 </div>
 
-                {/* Action Controls Section */}
-                <div style={styles.actionsContainer}>
-                    <div style={styles.buttonGroup}>
-                        <button
-                            onClick={toggleReady}
+                {/* READY / START SECTION */}
+                <div style={styles.actionCard}>
+
+                    <div>
+
+                        <h2 style={styles.cardTitle}>
+                            {currentPlayer?.ready
+                                ? "✅ You are Ready"
+                                : "⏳ You are Not Ready"}
+                        </h2>
+
+                        <p
                             style={{
-                                ...styles.button,
-                                ...(room.players.find((player) => player.id === playerId)?.ready
-                                    ? styles.notReadyButton
-                                    : styles.readyButton),
+                                margin: "5px 0 0",
+                                color: "#6B7280"
                             }}
                         >
-                            {room.players.find((player) => player.id === playerId)?.ready
-                                ? "❌ Set Not Ready"
-                                : "✅ I'm Ready!"}
+                            {isHost
+                                ? "Everyone must be ready before you start the game."
+                                : "Click Ready when you are prepared to play."}
+                        </p>
+
+                    </div>
+
+                    <div
+                        style={{
+                            display: "flex",
+                            gap: "10px"
+                        }}
+                    >
+
+                        {/* READY BUTTON */}
+                        <button
+                            onClick={toggleReady}
+                            disabled={!isConnected}
+                            style={{
+                                ...styles.readyButton,
+                                opacity: !isConnected ? 0.5 : 1,
+                                cursor: !isConnected
+                                    ? "not-allowed"
+                                    : "pointer"
+                            }}
+                        >
+                            {currentPlayer?.ready
+                                ? "❌ Not Ready"
+                                : "✅ I'm Ready"}
                         </button>
 
+                        {/* START GAME */}
                         {isHost && (
                             <button
                                 onClick={startGame}
-                                disabled={isStartDisabled}
+                                disabled={!isConnected}
                                 style={{
-                                    ...styles.button,
                                     ...styles.startButton,
-                                    ...(isStartDisabled ? styles.disabledButton : {}),
+                                    opacity: !isConnected ? 0.5 : 1,
+                                    cursor: !isConnected
+                                        ? "not-allowed"
+                                        : "pointer"
                                 }}
                             >
                                 🚀 Start Game
                             </button>
                         )}
+
                     </div>
 
-                    {!isHost && (
-                        <div style={styles.noticeBanner}>
-                            ⏳ Waiting for the host to start the game...
-                        </div>
-                    )}
-
-                    {isHost && room.players.length < 2 && (
-                        <div style={styles.warningBanner}>
-                            ⚠️ At least 2 players are required to start the game.
-                        </div>
-                    )}
-
-                    <button onClick={leaveRoom} style={styles.leaveButton}>
-                        🚪 Leave Room
-                    </button>
                 </div>
+
+                {/* STATUS */}
+                <div style={styles.statusCard}>
+
+                    <strong>
+                        {room.players?.filter(
+                            (player) => player.ready
+                        ).length || 0}
+                        {" / "}
+                        {room.players?.length || 0}
+                        {" players ready"}
+                    </strong>
+
+                    {isHost && (
+                        <span>
+                            {allReady
+                                ? " 🎉 Everyone is ready! You can start."
+                                : " ⏳ Waiting for everyone to be ready."}
+                        </span>
+                    )}
+
+                </div>
+
+                {/* LEAVE */}
+                <button
+                    onClick={leaveRoom}
+                    style={styles.leaveButton}
+                >
+                    🚪 Leave Room
+                </button>
+
             </div>
         </div>
     );
 }
 
-// Inline CSS-in-JS Styles Object
+// =========================================================
+// STYLES
+// =========================================================
+
 const styles = {
-    pageContainer: {
+
+    page: {
         minHeight: "100vh",
-        backgroundColor: "#f4f6f8",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: "20px",
-        fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+        backgroundColor: "#F3F4F6",
+        padding: "30px 20px",
+        fontFamily:
+            "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        color: "#1F2937"
     },
-    loadingContainer: {
-        minHeight: "100vh",
-        backgroundColor: "#f4f6f8",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: "20px",
-    },
-    loadingCard: {
-        backgroundColor: "#ffffff",
-        padding: "40px",
-        borderRadius: "16px",
-        boxShadow: "0 10px 25px rgba(0,0,0,0.08)",
-        textAlign: "center",
-        maxWidth: "400px",
-        width: "100%",
-    },
-    card: {
-        backgroundColor: "#ffffff",
-        width: "100%",
-        maxWidth: "650px",
-        borderRadius: "16px",
-        boxShadow: "0 10px 25px rgba(0,0,0,0.08)",
-        padding: "32px",
+
+    container: {
+        maxWidth: "900px",
+        margin: "0 auto",
         display: "flex",
         flexDirection: "column",
-        gap: "24px",
+        gap: "18px"
     },
+
     header: {
+        backgroundColor: "#FFFFFF",
+        padding: "20px 25px",
+        borderRadius: "16px",
         display: "flex",
         justifyContent: "space-between",
         alignItems: "center",
-        flexWrap: "wrap",
-        gap: "12px",
+        boxShadow:
+            "0 4px 10px rgba(0,0,0,0.05)"
     },
+
     title: {
         margin: 0,
         fontSize: "1.8rem",
-        color: "#2c3e50",
-    },
-    roomBadge: {
-        backgroundColor: "#eef2ff",
-        border: "1px solid #c7d2fe",
-        borderRadius: "10px",
-        padding: "6px 14px",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-    },
-    roomBadgeLabel: {
-        fontSize: "0.65rem",
-        fontWeight: "700",
-        color: "#4f46e5",
-        letterSpacing: "0.5px",
-    },
-    roomBadgeValue: {
-        fontSize: "1.1rem",
         fontWeight: "800",
-        color: "#312e81",
+        color: "#111827"
     },
-    infoBar: {
-        display: "flex",
-        justifyContent: "space-around",
-        backgroundColor: "#f8fafc",
-        padding: "12px",
-        borderRadius: "10px",
-        border: "1px solid #e2e8f0",
-        fontSize: "0.9rem",
-        color: "#475569",
+
+    subtitle: {
+        margin: "5px 0 0",
+        color: "#6B7280"
     },
-    infoItem: {
-        display: "flex",
-        alignItems: "center",
-        gap: "6px",
-    },
-    infoIcon: {
-        fontSize: "1rem",
-    },
-    sectionCard: {
-        backgroundColor: "#ffffff",
-    },
-    sectionHeader: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: "12px",
-    },
-    sectionTitle: {
-        margin: 0,
-        fontSize: "1.1rem",
-        color: "#334155",
-    },
-    playerCountPill: {
-        backgroundColor: "#e2e8f0",
-        color: "#475569",
-        padding: "2px 10px",
-        borderRadius: "12px",
-        fontSize: "0.8rem",
-        fontWeight: "600",
-    },
-    playersList: {
-        display: "flex",
-        flexDirection: "column",
-        gap: "8px",
-    },
-    playerCard: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        padding: "12px 16px",
-        backgroundColor: "#f8fafc",
-        border: "1px solid #e2e8f0",
-        borderRadius: "10px",
-        transition: "all 0.2s ease",
-    },
-    currentPlayerCard: {
-        borderColor: "#a5b4fc",
-        backgroundColor: "#f5f3ff",
-    },
-    playerInfo: {
-        display: "flex",
-        alignItems: "center",
-        gap: "10px",
-    },
-    avatarIcon: {
-        fontSize: "1.1rem",
-    },
-    playerName: {
-        fontWeight: "600",
-        color: "#1e293b",
-        fontSize: "0.95rem",
-    },
-    hostTag: {
-        backgroundColor: "#fef3c7",
-        color: "#92400e",
-        fontSize: "0.75rem",
-        fontWeight: "700",
-        padding: "2px 8px",
-        borderRadius: "6px",
-        border: "1px solid #fde68a",
-    },
-    youTag: {
-        backgroundColor: "#e0e7ff",
-        color: "#3730a3",
-        fontSize: "0.75rem",
-        fontWeight: "700",
-        padding: "2px 8px",
-        borderRadius: "6px",
-    },
-    playerStatusContainer: {
-        display: "flex",
-        alignItems: "center",
-        gap: "12px",
-    },
-    statusBadge: {
-        fontSize: "0.8rem",
-        fontWeight: "600",
-        padding: "4px 10px",
-        borderRadius: "12px",
-    },
-    scoreBadge: {
+
+    connectionStatus: {
+        padding: "8px 14px",
+        borderRadius: "20px",
         fontSize: "0.85rem",
-        fontWeight: "600",
-        color: "#64748b",
+        fontWeight: "700"
     },
-    actionsContainer: {
+
+    card: {
+        backgroundColor: "#FFFFFF",
+        borderRadius: "14px",
+        padding: "20px",
+        border: "1px solid #E5E7EB",
+        boxShadow:
+            "0 2px 5px rgba(0,0,0,0.03)"
+    },
+
+    cardTitle: {
+        margin: "0 0 15px",
+        fontSize: "1.1rem",
+        fontWeight: "700"
+    },
+
+    settingsGrid: {
+        display: "grid",
+        gridTemplateColumns:
+            "repeat(auto-fit, minmax(130px, 1fr))",
+        gap: "12px"
+    },
+
+    settingItem: {
+        backgroundColor: "#F9FAFB",
+        padding: "12px",
+        borderRadius: "8px",
         display: "flex",
         flexDirection: "column",
-        gap: "12px",
-        marginTop: "8px",
+        gap: "5px",
+        color: "#6B7280",
+        fontSize: "0.85rem"
     },
-    buttonGroup: {
+
+    playerList: {
         display: "flex",
-        gap: "12px",
+        flexDirection: "column",
+        gap: "10px"
     },
-    button: {
-        flex: 1,
-        padding: "12px 20px",
-        borderRadius: "8px",
-        fontSize: "1rem",
-        fontWeight: "600",
-        border: "none",
-        cursor: "pointer",
-        transition: "opacity 0.2s ease",
+
+    playerRow: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "12px",
+        backgroundColor: "#F9FAFB",
+        borderRadius: "10px",
+        border: "1px solid #F3F4F6"
     },
+
+    avatar: {
+        width: "38px",
+        height: "38px",
+        borderRadius: "50%",
+        backgroundColor: "#EEF2FF",
+        color: "#4F46E5",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontWeight: "800"
+    },
+
+    hostTag: {
+        display: "inline-block",
+        marginTop: "3px",
+        fontSize: "0.7rem",
+        backgroundColor: "#FEF3C7",
+        color: "#D97706",
+        padding: "2px 6px",
+        borderRadius: "4px"
+    },
+
+    readyBadge: {
+        backgroundColor: "#DCFCE7",
+        color: "#166534",
+        padding: "5px 10px",
+        borderRadius: "15px",
+        fontSize: "0.8rem",
+        fontWeight: "700"
+    },
+
+    waitingBadge: {
+        backgroundColor: "#F3F4F6",
+        color: "#6B7280",
+        padding: "5px 10px",
+        borderRadius: "15px",
+        fontSize: "0.8rem",
+        fontWeight: "600"
+    },
+
+    actionCard: {
+        backgroundColor: "#FFFFFF",
+        borderRadius: "14px",
+        padding: "20px",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: "20px",
+        border: "1px solid #E5E7EB",
+        boxShadow:
+            "0 4px 8px rgba(0,0,0,0.04)"
+    },
+
     readyButton: {
-        backgroundColor: "#10b981",
-        color: "#ffffff",
+        backgroundColor: "#22C55E",
+        color: "#FFFFFF",
+        border: "none",
+        padding: "11px 18px",
+        borderRadius: "9px",
+        fontWeight: "700"
     },
-    notReadyButton: {
-        backgroundColor: "#f59e0b",
-        color: "#ffffff",
-    },
+
     startButton: {
-        backgroundColor: "#6366f1",
-        color: "#ffffff",
+        backgroundColor: "#4F46E5",
+        color: "#FFFFFF",
+        border: "none",
+        padding: "11px 18px",
+        borderRadius: "9px",
+        fontWeight: "700"
     },
-    disabledButton: {
-        backgroundColor: "#cbd5e1",
-        color: "#94a3b8",
-        cursor: "not-allowed",
+
+    statusCard: {
+        backgroundColor: "#EEF2FF",
+        color: "#3730A3",
+        padding: "14px 18px",
+        borderRadius: "10px",
+        display: "flex",
+        justifyContent: "center",
+        gap: "5px",
+        flexWrap: "wrap",
+        textAlign: "center"
     },
+
     leaveButton: {
-        width: "100%",
-        padding: "10px",
-        backgroundColor: "transparent",
-        color: "#ef4444",
-        border: "1px solid #fca5a5",
-        borderRadius: "8px",
-        fontSize: "0.95rem",
-        fontWeight: "600",
+        backgroundColor: "#EF4444",
+        color: "#FFFFFF",
+        border: "none",
+        padding: "11px 20px",
+        borderRadius: "9px",
+        fontWeight: "700",
         cursor: "pointer",
+        alignSelf: "center"
     },
-    noticeBanner: {
-        backgroundColor: "#eff6ff",
-        color: "#1e40af",
-        border: "1px solid #bfdbfe",
-        padding: "10px",
-        borderRadius: "8px",
-        fontSize: "0.9rem",
-        textAlign: "center",
+
+    loadingContainer: {
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#F3F4F6"
     },
-    warningBanner: {
-        backgroundColor: "#fffbebf",
-        color: "#b45309",
-        border: "1px solid #fde68a",
-        padding: "10px",
-        borderRadius: "8px",
-        fontSize: "0.9rem",
-        textAlign: "center",
-    },
+
+    spinner: {
+        width: "40px",
+        height: "40px",
+        border: "4px solid #E5E7EB",
+        borderTop: "4px solid #4F46E5",
+        borderRadius: "50%",
+        marginBottom: "15px"
+    }
 };
 
 export default Lobby;

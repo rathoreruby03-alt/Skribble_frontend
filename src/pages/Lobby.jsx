@@ -5,20 +5,21 @@ import { Client } from "@stomp/stompjs";
 const API_URL = import.meta.env.VITE_API_URL;
 
 function Lobby() {
-  const navigate = useNavigate();
+    const navigate = useNavigate();
 
-  const [room, setRoom] = useState(null);
-  const [client, setClient] = useState(null);
+    const [room, setRoom] = useState(null);
+    const [client, setClient] = useState(null);
+    const [isConnected, setIsConnected] = useState(false);
 
-  const roomId = sessionStorage.getItem("roomId");
-  const playerId = sessionStorage.getItem("playerId");
+    const roomId = sessionStorage.getItem("roomId");
+    const playerId = sessionStorage.getItem("playerId");
 
-  const isHost = room?.hostId === playerId;
+    const isHost = room?.hostId === playerId;
 
-  const isReady =
-    room?.players?.find(
-      (player) => player.id === playerId
-    )?.ready || false;
+    const isReady =
+        room?.players?.find(
+            (player) => player.id === playerId
+        )?.ready || false;
 
     useEffect(() => {
         if (!roomId) {
@@ -34,15 +35,14 @@ function Lobby() {
 
             onConnect: () => {
                 console.log("WebSocket connected to lobby");
+                setIsConnected(true);
 
-                // Room updates
                 stompClient.subscribe(`/topic/room/${roomId}`, (message) => {
                     const updatedRoom = JSON.parse(message.body);
                     console.log("Room updated:", updatedRoom);
                     setRoom(updatedRoom);
                 });
 
-                // Game updates
                 stompClient.subscribe(`/topic/room/${roomId}/game`, (message) => {
                     const gameData = JSON.parse(message.body);
                     console.log("Game update:", gameData);
@@ -55,10 +55,17 @@ function Lobby() {
 
             onStompError: (frame) => {
                 console.error("STOMP error:", frame);
+                setIsConnected(false);
             },
 
             onWebSocketError: (error) => {
                 console.error("WebSocket error:", error);
+                setIsConnected(false);
+            },
+
+            onWebSocketClose: () => {
+                console.log("WebSocket disconnected");
+                setIsConnected(false);
             },
         });
 

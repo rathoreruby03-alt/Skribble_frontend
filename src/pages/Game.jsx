@@ -18,6 +18,7 @@ function Game() {
     const [leaderboard, setLeaderboard] = useState([]);
 
     const [client, setClient] = useState(null);
+    const [isConnected, setIsConnected] = useState(false);
 
     const [isDrawing, setIsDrawing] = useState(false);
 
@@ -105,7 +106,7 @@ function Game() {
     };
 
     const sendChat = () => {
-        if (!chatInput.trim() || !client || !client.connected) {
+        if (!chatInput.trim() || !client || !isConnected) {
             return;
         }
 
@@ -133,11 +134,27 @@ function Game() {
             reconnectDelay: 5000,
             onConnect: () => {
                 console.log("Game WebSocket connected");
+                setIsConnected(true);
 
                 stompClient.subscribe(`/topic/room/${roomId}`, (message) => {
                     const updatedRoom = JSON.parse(message.body);
                     console.log("Room update:", updatedRoom);
                     setRoom(updatedRoom);
+
+                    onStompError: (frame) => {
+                        console.error("STOMP error:", frame);
+                        setIsConnected(false);
+                    };
+
+                    onWebSocketError: (error) => {
+                        console.error("WebSocket error:", error);
+                        setIsConnected(false);
+                    };
+
+                    onWebSocketClose: () => {
+                        console.log("Game WebSocket disconnected");
+                        setIsConnected(false);
+                    }
                 });
 
                 // -------------------------------------------------
@@ -445,7 +462,7 @@ function Game() {
             return updatedHistory;
         });
 
-        if (client && client.connected) {
+        if (client && isConnected) {
             client.publish({
                 destination: "/app/game/undo",
                 body: JSON.stringify({
@@ -466,7 +483,7 @@ function Game() {
         clearLocalCanvas();
         setDrawingHistory([]);
 
-        if (client && client.connected) {
+        if (client && isConnected) {
             client.publish({
                 destination: "/app/game/clear",
                 body: JSON.stringify({

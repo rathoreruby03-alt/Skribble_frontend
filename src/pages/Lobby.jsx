@@ -90,7 +90,7 @@ function Lobby() {
     };
 
     const startGame = () => {
-        if (!client || !client.connected) {
+        if (!client || !isConnected) {
             alert("WebSocket is not connected. Please wait a moment.");
             return;
         }
@@ -119,7 +119,7 @@ function Lobby() {
     };
 
     const toggleReady = () => {
-        if (!client || !client.connected) {
+        if (!client || !isConnected) {
             alert("WebSocket is not connected. Please wait a moment.");
             return;
         }
@@ -151,7 +151,7 @@ function Lobby() {
     };
 
     const leaveRoom = () => {
-        if (!client || !client.connected) {
+        if (!client || !isConnected) {
             alert("WebSocket is not connected. Please wait a moment.");
             return;
         }
